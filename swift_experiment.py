@@ -1,5 +1,10 @@
+import logging
 import requests
 from elasticsearch import Elasticsearch, helpers
+from backoff import on_exception, expo
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # SWIFT gpi API endpoint
 SWIFT_GPI_API_URL = "https://api.swift.com/v1/gpi/tracker"
@@ -22,6 +27,19 @@ def initialize_elasticsearch(host="localhost", port=9200):
     es = Elasticsearch([{"host": host, "port": port}])
     return es
 
+def check_elasticsearch_health(es):
+    """
+    Check the health of the Elasticsearch cluster.
+
+    Parameters:
+    - es (Elasticsearch): An instance of the Elasticsearch client.
+
+    Returns:
+    - str: The health status of the cluster.
+    """
+    health = es.cluster.health()
+    return health['status']
+
 def fetch_swift_transactions(es, index_name="swift_transactions"):
     """
     Fetch SWIFT transactions and index them into Elasticsearch.
@@ -36,30 +54,27 @@ def fetch_swift_transactions(es, index_name="swift_transactions"):
     }
     
     try:
-        # Make request to SWIFT gpi API to retrieve transactions
         response = requests.get(SWIFT_GPI_API_URL, headers=headers)
-        response.raise_for_status() # Raises an HTTPError if the response status code is not 200
-        
-        # Parse JSON response
+        response.raise_for_status()
         transactions = response.json()
-        
-        # Prepare bulk actions for Elasticsearch
-        actions = [
-            {
-                "_index": index_name,
-                "_source": transaction
-            }
-            for transaction in transactions
-        ]
-        
-        # Use helpers.bulk to perform bulk indexing
-        helpers.bulk(es, actions)
-        
+        actions = [{"_index": index_name, "_source": transaction} for transaction in transactions]
+        bulk_index_with_retry(es, actions, index_name)
         print(f"{len(transactions)} transactions indexed in Elasticsearch.")
     except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch transactions. Error: {e}")
+        logging.error(f"Failed to fetch transactions. Error: {e}")
+
+@on_exception(expo, (requests.exceptions.RequestException,), max_tries=8)
+def bulk_index_with_retry(es, actions, index_name):
+    """
+    Bulk index documents with retry logic.
+
+    Parameters:
+    - es (Elasticsearch): An instance of the Elasticsearch client.
+    - actions (list): A list of actions to perform.
+    - index_name (str): The name of the Elasticsearch index to use.
+    """
+    helpers.bulk(es, actions)
 
 if __name__ == "__main__":
-    # Example usage: Pass host and port as arguments
     es = initialize_elasticsearch(host="your_host", port=your_port)
     fetch_swift_transactions(es, index_name="your_index_name")
