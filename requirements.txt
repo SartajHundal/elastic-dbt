@@ -1,2 +1,5 @@
-elasticsearch
-dbt
+elasticsearch==7.17.0
+requests==2.26.0
+backoff==1.11.1
+setuptools==60.9.3
+cython==0.29.30
