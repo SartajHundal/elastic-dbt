@@ -1,0 +1,78 @@
+# swift_transactions.pyx
+
+cimport cython
+import logging
+import requests
+from elasticsearch import Elasticsearch, helpers
+from backoff import on_exception, expo
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# SWIFT gpi API endpoint
+SWIFT_GPI_API_URL = "https://api.swift.com/v1/gpi/tracker"
+
+# API authentication credentials
+SWIFT_API_KEY = "your_swift_api_key"
+SWIFT_API_SECRET = "your_swift_api_secret"
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def initialize_elasticsearch(host="localhost", port=9200):
+    """
+    Initialize Elasticsearch client with user-defined host and port.
+
+    Parameters:
+    - host (str): The hostname of the Elasticsearch instance.
+    - port (int): The port number of the Elasticsearch instance.
+
+    Returns:
+    - Elasticsearch: An instance of the Elasticsearch client.
+    """
+    cdef Elasticsearch es = Elasticsearch([{"host": host, "port": port}])
+    return es
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def fetch_swift_transactions(Elasticsearch es, str index_name="swift_transactions"):
+    """
+    Fetch SWIFT transactions and index them into Elasticsearch.
+
+    Parameters:
+    - es (Elasticsearch): An instance of the Elasticsearch client.
+    - index_name (str): The name of the Elasticsearch index to use.
+    """
+    cdef str headers = {
+        "Authorization": f"Bearer {SWIFT_API_KEY}:{SWIFT_API_SECRET}",
+        "Content-Type": "application/json"
+    }
+    
+    cdef list transactions
+    try:
+        cdef requests.Response response = requests.get(SWIFT_GPI_API_URL, headers=headers)
+        response.raise_for_status()
+        transactions = response.json()
+        cdef list actions = [{"_index": index_name, "_source": transaction} for transaction in transactions]
+        bulk_index_with_retry(es, actions, index_name)
+        logging.info(f"{len(transactions)} transactions indexed in Elasticsearch.")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to fetch transactions. Error: {e}")
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@on_exception(expo, (requests.exceptions.RequestException,), max_tries=8)
+def bulk_index_with_retry(Elasticsearch es, list actions, str index_name):
+    """
+    Bulk index documents with retry logic.
+
+    Parameters:
+    - es (Elasticsearch): An instance of the Elasticsearch client.
+    - actions (list): A list of actions to perform.
+    - index_name (str): The name of the Elasticsearch index to use.
+    """
+    helpers.bulk(es, actions)
+
+# Main function
+if __name__ == "__main__":
+    es = initialize_elasticsearch(host="your_host", port=your_port)
+    fetch_swift_transactions(es, index_name="your_index_name")
