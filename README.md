@@ -19,6 +19,9 @@ This connector script bridges the gap between Elasticsearch and dbt, enabling yo
 3. **Loading Data into dbt-Compatible Data Store**:
    - Once the data is transformed, the script initializes a dbt client and inserts the transformed data into a dbt-compatible data store using SQL queries.
 
+4. **Routine Checks Integration**
+   - Real-time monitoring of Elasticsearch queries allows for proactive identification and resolution of performance issues; we can push Exabyte-scale with minimal sharding ...
+
 ### Prerequisites:
 
 1. Python installed on your system.

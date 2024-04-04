@@ -1,0 +1,28 @@
+elasticsearch:
+  cluster:
+    hosts:
+      - address: "10.10.10.10"
+        port: 9200
+        number_of_shards: x
+        number_of_replicas: x
+      - address: "10.10.10.11"
+        port: 9200
+        number_of_shards: x
+        number_of_replicas: x
+      - address: "10.10.10.12"
+        port: 9200
+        number_of_shards: x
+        number_of_replicas: x
+
+dbt:
+  profiles_dir: "/path/to/your/dbt/profiles"
+  target: "your_dbt_target_name"
+
+routine_checks:
+  debug_returner_payload: True
+  states_count: True
+  states_order_output: True
+  states_single_index: True
+  functions_blacklist:
+    - test.ping
+    - saltutil.find_job
