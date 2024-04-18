@@ -3,16 +3,16 @@ elasticsearch:
     hosts:
       - address: "10.10.10.10"
         port: 9200
-        number_of_shards: x
-        number_of_replicas: x
+        number_of_shards: 3  # Default number of shards
+        number_of_replicas: 2  # Default number of replicas
       - address: "10.10.10.11"
         port: 9200
-        number_of_shards: x
-        number_of_replicas: x
+        number_of_shards: 4  # Custom number of shards for this node
+        number_of_replicas: 2
       - address: "10.10.10.12"
         port: 9200
-        number_of_shards: x
-        number_of_replicas: x
+        number_of_shards: 5  # Custom number of shards for this node
+        number_of_replicas: 1
 
 dbt:
   profiles_dir: "/path/to/your/dbt/profiles"
