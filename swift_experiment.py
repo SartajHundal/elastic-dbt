@@ -40,21 +40,28 @@ def check_elasticsearch_health(es):
     health = es.cluster.health()
     return health['status']
 
-def fetch_swift_transactions(es, index_name="swift_transactions"):
+def fetch_swift_transactions(es, 
+                             api_url,
+                             api_key,
+                             api_secret,
+                             index_name="swift_transactions"):
     """
-    Fetch SWIFT transactions and index them into Elasticsearch.
+    Fetches SWIFT transactions and indexes them into Elasticsearch.
 
     Parameters:
     - es (Elasticsearch): An instance of the Elasticsearch client.
+    - api_url (str): The URL of the SWIFT API.
+    - api_key (str): The SWIFT API key.
+    - api_secret (str): The SWIFT API secret.
     - index_name (str): The name of the Elasticsearch index to use.
     """
     headers = {
-        "Authorization": f"Bearer {SWIFT_API_KEY}:{SWIFT_API_SECRET}",
+        "Authorization": f"Bearer {api_key}:{api_secret}",
         "Content-Type": "application/json"
     }
     
     try:
-        response = requests.get(SWIFT_GPI_API_URL, headers=headers)
+        response = requests.get(api_url, headers=headers)
         response.raise_for_status()
         transactions = response.json()
         actions = [{"_index": index_name, "_source": transaction} for transaction in transactions]
@@ -62,6 +69,7 @@ def fetch_swift_transactions(es, index_name="swift_transactions"):
         print(f"{len(transactions)} transactions indexed in Elasticsearch.")
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to fetch transactions. Error: {e}")
+
 
 @on_exception(expo, (requests.exceptions.RequestException,), max_tries=8)
 def bulk_index_with_retry(es, actions, index_name):
