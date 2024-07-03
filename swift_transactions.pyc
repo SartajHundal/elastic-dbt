@@ -1,7 +1,9 @@
-cimport cython
 import logging
 import yaml
 import aiohttp
+from elasticsearch import Elasticsearch
+from typing import List, Dict, Any
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -11,12 +13,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def initialize_elasticsearch(config_path: str) -> Elasticsearch:
     """
     Initialize Elasticsearch client with host and port from the YAML configuration file.
-
-    Parameters:
-    - config_path (str): Path to the YAML configuration file.
-
-    Returns:
-    - Elasticsearch: An instance of the Elasticsearch client.
     """
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -32,10 +28,6 @@ def initialize_elasticsearch(config_path: str) -> Elasticsearch:
 async def fetch_swift_transactions(es: Elasticsearch, config_path: str) -> None:
     """
     Fetch SWIFT transactions asynchronously and index them into Elasticsearch.
-
-    Parameters:
-    - es (Elasticsearch): An instance of the Elasticsearch client.
-    - config_path (str): Path to the YAML configuration file.
     """
     cdef str headers = {
         "Authorization": f"Bearer {SWIFT_API_KEY}:{SWIFT_API_SECRET}",
@@ -51,20 +43,38 @@ async def fetch_swift_transactions(es: Elasticsearch, config_path: str) -> None:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-@on_exception(expo, (aiohttp.ClientError,), max_tries=8)
-async def bulk_index_with_retry(es: Elasticsearch, actions: list, index_name: str) -> None:
+async def fetch_payment_gateway_transactions() -> List[Dict[str, Any]]:
+    """
+    Fetch transactions from the payment gateway asynchronously.
+    """
+    headers = {
+        "Authorization": f"Bearer {PAYMENT_GATEWAY_CONFIG['api_key']}:{PAYMENT_GATEWAY_CONFIG['api_secret']}",
+        "Content-Type": "application/json"
+    }
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(PAYMENT_GATEWAY_CONFIG["endpoint"]) as response:
+            transactions = await response.json()
+            return transactions
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def bulk_index_with_retry(es: Elasticsearch, actions: list, index_name: str) -> None:
     """
     Bulk index documents with retry logic.
-
-    Parameters:
-    - es (Elasticsearch): An instance of the Elasticsearch client.
-    - actions (list): A list of actions to perform.
-    - index_name (str): The name of the Elasticsearch index to use.
     """
     helpers.bulk(es, actions)
 
-# Main function
 if __name__ == "__main__":
     config_path = 'config.yaml'
     es = initialize_elasticsearch(config_path)
+    
+    # Fetch and index Swift transactions
     asyncio.run(fetch_swift_transactions(es, config_path))
+    
+    # Fetch and index payment gateway transactions
+    payment_gateway_transactions = asyncio.run(fetch_payment_gateway_transactions())
+    if payment_gateway_transactions:
+        index_name = "payment_gateway_transactions"  # Adjust according to your setup
+        bulk_index_with_retry(es, [{"_index": index_name, "_source": tx} for tx in payment_gateway_transactions], index_name)
+        logging.info(f"{len(payment_gateway_transactions)} payment gateway transactions indexed in Elasticsearch.")
