@@ -4,15 +4,15 @@ import aiohttp
 from elasticsearch import Elasticsearch
 from typing import List, Dict, Any
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
-def initialize_elasticsearch(config_path: str) -> Elasticsearch:
+def initialize_elasticsearch(node_id: str, config_path: str) -> Elasticsearch:
     """
-    Initialize Elasticsearch client with host and port from the YAML configuration file.
+    Initializes an Elasticsearch client for each node in a distributed system.
+    Each node connects to its own Elasticsearch instance specified in the configuration file.
     """
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -20,14 +20,13 @@ def initialize_elasticsearch(config_path: str) -> Elasticsearch:
     es_host = config.get('elasticsearch', {}).get('host', 'localhost')
     es_port = config.get('elasticsearch', {}).get('port', 9200)
     
-    cdef Elasticsearch es = Elasticsearch([{"host": es_host, "port": es_port}])
+    index_name = f"{node_id}_transactions"
+    cdef Elasticsearch es = Elasticsearch([{"host": es_host, "port": es_port}], index=index_name)
     return es
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
 async def fetch_swift_transactions(es: Elasticsearch, config_path: str) -> None:
     """
-    Fetch SWIFT transactions asynchronously and index them into Elasticsearch.
+    Asynchronously fetches SWIFT transactions and indexes them into Elasticsearch.
     """
     cdef str headers = {
         "Authorization": f"Bearer {SWIFT_API_KEY}:{SWIFT_API_SECRET}",
@@ -41,11 +40,9 @@ async def fetch_swift_transactions(es: Elasticsearch, config_path: str) -> None:
             bulk_index_with_retry(es, actions, index_name)
             logging.info(f"{len(transactions)} transactions indexed in Elasticsearch.")
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
 async def fetch_payment_gateway_transactions() -> List[Dict[str, Any]]:
     """
-    Fetch transactions from the payment gateway asynchronously.
+    Asynchronously fetches transactions from the payment gateway.
     """
     headers = {
         "Authorization": f"Bearer {PAYMENT_GATEWAY_CONFIG['api_key']}:{PAYMENT_GATEWAY_CONFIG['api_secret']}",
@@ -57,24 +54,37 @@ async def fetch_payment_gateway_transactions() -> List[Dict[str, Any]]:
             transactions = await response.json()
             return transactions
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
 def bulk_index_with_retry(es: Elasticsearch, actions: list, index_name: str) -> None:
     """
-    Bulk index documents with retry logic.
+    Bulk indexes documents with retry logic.
     """
     helpers.bulk(es, actions)
 
 if __name__ == "__main__":
-    config_path = 'config.yaml'
-    es = initialize_elasticsearch(config_path)
+    # Example node identifiers for demonstration; adjust based on actual deployment
+    node_ids = ['node1', 'node2']
     
-    # Fetch and index Swift transactions
-    asyncio.run(fetch_swift_transactions(es, config_path))
-    
-    # Fetch and index payment gateway transactions
-    payment_gateway_transactions = asyncio.run(fetch_payment_gateway_transactions())
-    if payment_gateway_transactions:
-        index_name = "payment_gateway_transactions"  # Adjust according to your setup
-        bulk_index_with_retry(es, [{"_index": index_name, "_source": tx} for tx in payment_gateway_transactions], index_name)
-        logging.info(f"{len(payment_gateway_transactions)} payment gateway transactions indexed in Elasticsearch.")
+    with ThreadPoolExecutor(max_workers=len(node_ids)) as executor:
+        futures = []
+        
+        for node_id in node_ids:
+            config_path = f'config_{node_id}.yaml'  # Unique configuration path for each node
+            
+            # Submit tasks to execute in parallel
+            future = executor.submit(initialize_elasticsearch, node_id, config_path)
+            futures.append(future)
+            
+            # Assuming fetch_swift_transactions and fetch_payment_gateway_transactions need to be adjusted similarly
+            future = executor.submit(fetch_swift_transactions, future.result(), config_path)
+            futures.append(future)
+            
+            future = executor.submit(fetch_payment_gateway_transactions, future.result())
+            futures.append(future)
+            
+            # After fetching, submit the bulk indexing task
+            future = executor.submit(bulk_index_with_retry, future.result(), future.result().actions, future.result().index_name)
+            futures.append(future)
+        
+        # Wait for all futures to complete
+        for future in futures:
+            future.result()
