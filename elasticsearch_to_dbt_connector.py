@@ -15,24 +15,27 @@ def connect_to_elasticsearch(config):
     """Establish connection to Elasticsearch."""
     return Elasticsearch(hosts=config['elasticsearch']['hosts'])
 
-def execute_elasticsearch_query(es_client, config):
+def execute_elasticsearch_query(es_client, config, batch_size=100):
     """
-    Execute Elasticsearch query and perform routine checks on the returner payload.
-
+    Execute Elasticsearch query in batches and yield results.
+    
     Args:
-        es_client: Elasticsearch client.
+        es_client: Elasticsearch client instance.
         config: Configuration dictionary.
-
-    Returns:
-        Transformed data.
+        batch_size: Number of documents to retrieve per batch.
+    
+    Yields:
+        List of document hits in batches.
     """
-    response = es_client.search(index=config['elasticsearch']['index_name'], body={"query": {"match_all": {}}})
-    
-    # Perform routine checks on the returner payload
-    if config['routine_checks']['debug_returner_payload']:
-        check_returner_payload(response)
-    
-    return response['hits']['hits']
+    query = {
+        "size": batch_size,
+        "query": {"match_all": {}},
+        "_source": True  # Retrieve full document content
+    }
+    page = es_client.search(**config['elasticsearch']['index_name'], body=query)
+    while page['hits']['total']['value'] > 0:
+        yield page['hits']['hits']
+        page = es_client.search_scroll(page['_scroll_id'], scroll='1m', size=batch_size)
 
 def check_returner_payload(response):
     """Perform routine checks on the returner payload."""
@@ -42,14 +45,21 @@ def check_returner_payload(response):
     if 'timed_out' in response:
         print(f"Elasticsearch query timed out: {response['timed_out']}")
 
-def transform_data(hits):
-    """Transform data from Elasticsearch response."""
-    transformed_data = []
-    for hit in hits:
-        source = hit['_source']
-        # Perform any necessary transformations here
-        transformed_data.append(source)
-    return transformed_data
+def transform_data(batch_generator):
+    """
+    Transform data from Elasticsearch response batches.
+    
+    Args:
+        batch_generator: Generator yielding Elasticsearch response batches.
+    
+    Yields:
+        Transformed data records.
+    """
+    for batch in batch_generator:
+        for hit in batch:
+            source = hit['_source']
+            # Perform any necessary transformations here
+            yield source
 
 def insert_data_into_dbt(dbt_client, transformed_data, target):
     """Insert transformed data into dbt-compatible data store."""
@@ -60,29 +70,28 @@ def insert_data_into_dbt(dbt_client, transformed_data, target):
 
 def main():
     try:
-
         # Load configuration from YAML file
         config = load_configuration('config.yaml')
 
         # Initialize Elasticsearch client
         es_client = connect_to_elasticsearch(config)
 
-        # Execute Elasticsearch query
-        hits = execute_elasticsearch_query(es_client, config)
-
+        # Execute Elasticsearch query in batches
+        batch_generator = execute_elasticsearch_query(es_client, config)
+        
         # Transform data
-        transformed_data = transform_data(hits)
+        transformed_data_generator = transform_data(batch_generator)
 
         # Initialize dbt client
         dbt_client = dbt.clients.profiles.Profile.get_current_profile().get_handle()
 
         # Insert data into dbt-compatible data store
-        insert_data_into_dbt(dbt_client, transformed_data, config['dbt']['target'])
+        for transformed_data_batch in transformed_data_generator:
+            insert_data_into_dbt(dbt_client, transformed_data_batch, config['dbt']['target'])
 
-        pass
     except Exception as e:
-            logging.error(f"An error occurred: {e}")
-            raise
+        logging.error(f"An error occurred: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
