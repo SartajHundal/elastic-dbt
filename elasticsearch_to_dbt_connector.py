@@ -2,6 +2,9 @@ import json
 from elasticsearch import Elasticsearch
 import dbt.clients
 import yaml
+import logging
+
+import update_config
 
 def load_configuration(filename):
     """Load configuration from YAML file."""
@@ -56,23 +59,43 @@ def insert_data_into_dbt(dbt_client, transformed_data, target):
                 handle.execute("INSERT INTO your_table_name VALUES (%s)", (json.dumps(record),))
 
 def main():
-    # Load configuration from YAML file
-    config = load_configuration('config.yaml')
+    try:
 
-    # Initialize Elasticsearch client
-    es_client = connect_to_elasticsearch(config)
+        # Load configuration from YAML file
+        config = load_configuration('config.yaml')
 
-    # Execute Elasticsearch query
-    hits = execute_elasticsearch_query(es_client, config)
+        # Initialize Elasticsearch client
+        es_client = connect_to_elasticsearch(config)
 
-    # Transform data
-    transformed_data = transform_data(hits)
+        # Execute Elasticsearch query
+        hits = execute_elasticsearch_query(es_client, config)
 
-    # Initialize dbt client
-    dbt_client = dbt.clients.profiles.Profile.get_current_profile().get_handle()
+        # Transform data
+        transformed_data = transform_data(hits)
 
-    # Insert data into dbt-compatible data store
-    insert_data_into_dbt(dbt_client, transformed_data, config['dbt']['target'])
+        # Initialize dbt client
+        dbt_client = dbt.clients.profiles.Profile.get_current_profile().get_handle()
+
+        # Insert data into dbt-compatible data store
+        insert_data_into_dbt(dbt_client, transformed_data, config['dbt']['target'])
+
+        pass
+    except Exception as e:
+            logging.error(f"An error occurred: {e}")
+            raise
 
 if __name__ == "__main__":
     main()
+
+    update_config.update_config_value('config.yaml', 'elasticsearch', 'version', '7.15.0')
+
+    # Set up logging
+    logging.basicConfig(level=logging.DEBUG, filename='app.log', filemode='a',
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Example usage
+    logging.debug('This is a debug message')
+    logging.info('This is an informational message')
+    logging.warning('This is a warning message')
+    logging.error('This is an error message')
+    logging.critical('This is a critical message')
